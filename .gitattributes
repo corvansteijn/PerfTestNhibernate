@@ -1,0 +1,4 @@
+# Disable line endings normalization, force crlf
+* -text
+
+*.sln -text merge=union
