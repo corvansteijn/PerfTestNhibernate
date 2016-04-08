@@ -5,6 +5,7 @@ using System.Linq;
 using FluentAssertions;
 using FluentNHibernate.Cfg;
 using FluentNHibernate.Cfg.Db;
+using FluentNHibernate.Conventions;
 using NHibernate;
 using NHibernate.Cfg;
 using NHibernate.Linq;
@@ -18,7 +19,7 @@ namespace PerfTestNhibernate
     {
         public const string TableName = "Employee";
         private const int RowCount = 100000;
-        private const int Repeat = 20;
+        private const int Repeat = 1;
         private const string DbFile = "hugeSet.db";
 
         //[Fact]
@@ -37,6 +38,19 @@ namespace PerfTestNhibernate
         {
             // create our NHibernate session factory
             var sessionFactory = CreateSessionFactory();
+
+            for (var i = 0; i < Repeat; i++)
+            {
+                var employees = ReadEmployeesUsingStatefulSession(sessionFactory);
+                employees.Should().HaveCount(RowCount);
+            }
+        }
+
+        [Fact]
+        public void StatefulSessionCustomTypes()
+        {
+            // create our NHibernate session factory
+            var sessionFactory = CreateSessionFactory(new[] { new StringTypeConvention() });
 
             for (var i = 0; i < Repeat; i++)
             {
@@ -109,21 +123,23 @@ namespace PerfTestNhibernate
                     PhoneNumber = "Lovely phone number " + i
                 };
 
-                var addresses = new List<Address>();
-
-                addresses.Add(new Address
+                var addresses = new List<Address>
                 {
-                    StreetName = "De Poorterstraat " + i,
-                    HouseNumber = i
-                    //EmployeeId = employee
-                });
+                    new Address
+                    {
+                        StreetName = "De Poorterstraat " + i,
+                        HouseNumber = i
+                        //EmployeeId = employee
+                    },
+                    new Address
+                    {
+                        StreetName = "Vijverberg " + i,
+                        HouseNumber = i
+                        //EmployeeId = employee
+                    }
+                };
 
-                addresses.Add(new Address
-                {
-                    StreetName = "Vijverberg " + i,
-                    HouseNumber = i
-                    //EmployeeId = employee
-                });
+
 
                 employee.Addresses = addresses;
 
@@ -236,15 +252,30 @@ namespace PerfTestNhibernate
             }
         }
 
-        private static ISessionFactory CreateSessionFactory(Action<Configuration> exposeConfiguration = null)
+        private static ISessionFactory CreateSessionFactory(IPropertyConvention[] customConventions)
+        {
+            return CreateSessionFactory(null, customConventions);
+        }
+
+        private static ISessionFactory CreateSessionFactory(
+            Action<Configuration> exposeConfiguration = null,
+            IPropertyConvention[] customConventions = null)
         {
             exposeConfiguration = exposeConfiguration ?? (cfg => { });
+            customConventions = customConventions ?? new IPropertyConvention[0];
 
             return Fluently.Configure()
                 .Database(MsSqlConfiguration.MsSql2008
                     .ConnectionString("Data Source=.;Initial Catalog=Dingen; Trusted_Connection=yes;"))
                 .Mappings(m =>
-                    m.FluentMappings.AddFromAssemblyOf<Program>())
+                {
+                    m.FluentMappings.AddFromAssemblyOf<Program>();
+
+                    foreach (var convention in customConventions)
+                    {
+                        m.FluentMappings.Conventions.Add(convention);
+                    }
+                })
                 .ExposeConfiguration(exposeConfiguration)
                 //.ExposeConfiguration(BuildSchema)
                 .BuildSessionFactory();

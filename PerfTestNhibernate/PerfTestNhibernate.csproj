@@ -89,6 +89,7 @@
     <Reference Include="System" />
     <Reference Include="System.ComponentModel.DataAnnotations" />
     <Reference Include="System.Core" />
+    <Reference Include="System.Data" />
     <Reference Include="System.Data.SQLite, Version=1.0.99.0, Culture=neutral, PublicKeyToken=db937bc2d44ff139, processorArchitecture=MSIL">
       <HintPath>..\packages\System.Data.SQLite.Core.1.0.99.0\lib\net45\System.Data.SQLite.dll</HintPath>
       <Private>True</Private>
@@ -122,12 +123,17 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="AbstractStringType.cs" />
     <Compile Include="Address.cs" />
     <Compile Include="AddressMap.cs" />
+    <Compile Include="ClassPropertySetter.cs" />
+    <Compile Include="ClassTupilizer.cs" />
     <Compile Include="Employee.cs" />
     <Compile Include="EmployeeMap.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="StringType.cs" />
+    <Compile Include="StringTypeConvention.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config">
