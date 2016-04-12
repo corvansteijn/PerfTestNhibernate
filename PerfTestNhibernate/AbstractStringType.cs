@@ -34,20 +34,31 @@ namespace PerfTestNhibernate
         public override object NullSafeGet(IDataReader rs, string name)
         {
             int ordinal = rs.GetOrdinal(name);
+            object val;
+            try
+            {
+                val = rs.GetValue(ordinal);
+                if (val is DBNull)
+                {
+                    val = null;
+                }
+            }
+            catch (InvalidCastException ex)
+            {
+                throw new ADOException(string.Format("Could not cast the value in field {0} of type {1} to the Type {2}.  Please check to make sure that the mapping is correct and that your DataProvider supports this Data Type.", (object)name, (object)rs[ordinal].GetType().Name, (object)this.GetType().Name), (Exception)ex);
+            }
 
-            return rs.GetString(ordinal);
+            return val;
         }
 
         public override object Get(IDataReader rs, int index)
         {
-            return rs.GetString(index);
+            return (object)Convert.ToString(rs[index]);
         }
 
         public override object Get(IDataReader rs, string name)
         {
-            int ordinal = rs.GetOrdinal(name);
-
-            return rs.GetString(ordinal);
+            return (object)Convert.ToString(rs[name]);
         }
 
         public override string ToString(object val)

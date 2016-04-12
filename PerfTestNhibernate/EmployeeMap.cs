@@ -10,7 +10,7 @@ namespace PerfTestNhibernate
         public EmployeeMap()
         {
             Tuplizer(TuplizerMode.Poco, typeof (EmployeeTupilizer));
-            Table(Program.TableName);
+            Table(NHibernatePerfTests.TableName);
 
             Id(emp => emp.Id);
             Map(emp => emp.FirstName);

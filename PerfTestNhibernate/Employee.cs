@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using NHibernate;
 
 namespace PerfTestNhibernate
 {
@@ -33,6 +34,60 @@ namespace PerfTestNhibernate
         public override int GetHashCode()
         {
             return Id.GetHashCode();
+        }
+
+        public static List<Employee> CreateEmployeesForTest()
+        {
+            var employeeList = new List<Employee>();
+            for (var i = 0; i < 100000; i++)
+            {
+                var employee = new Employee
+                {
+                    FirstName = "HUGEFIRSTNAME" + i,
+                    LastName = "HUGELASTNAME" + i,
+                    PhoneNumber = "Lovely phone number " + i
+                };
+
+                var addresses = new List<Address>
+                {
+                    new Address
+                    {
+                        StreetName = "De Poorterstraat " + i,
+                        HouseNumber = i
+                        //EmployeeId = employee
+                    },
+                    new Address
+                    {
+                        StreetName = "Vijverberg " + i,
+                        HouseNumber = i
+                        //EmployeeId = employee
+                    }
+                };
+
+                employee.Addresses = addresses;
+
+                employeeList.Add(employee);
+            }
+            return employeeList;
+        }
+
+        public static void SaveEmployeesToDB(ISessionFactory sessionFactory, List<Employee> employeeList)
+        {
+            using (var session = sessionFactory.OpenSession())
+            {
+                // populate the database
+                using (var transaction = session.BeginTransaction())
+                {
+                    foreach (var employee in employeeList)
+                    {
+                        session.Save(employee);
+                    }
+                    // save both stores, this saves everything else via cascading
+                    //session.SaveOrUpdate(barginBasin);
+
+                    transaction.Commit();
+                }
+            }
         }
     }
 }
