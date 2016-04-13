@@ -1,7 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using FluentAssertions;
 using FluentNHibernate.Cfg;
 using FluentNHibernate.Cfg.Db;
@@ -20,7 +25,8 @@ namespace PerfTestNhibernate
     {
         public const string TableName = "Employee";
         private const int RowCount = 100000;
-        private const int repeat = 20;
+        private const int CounterSleepTime = 200;
+        private const int repeat = 50;
         private const string DbFile = "hugeSet.db";
         private readonly ITestOutputHelper output;
 
@@ -35,11 +41,32 @@ namespace PerfTestNhibernate
             // create our NHibernate session factory
             var sessionFactory = CreateSessionFactory();
 
-            Repeat(() =>
+            Repeat("StatefulSession", () =>
             {
                 using (var session = sessionFactory.OpenSession())
                 {
-                    // retreive all stores and display them
+                    // retrieve all stores and display them
+                    using (session.BeginTransaction())
+                    {
+                        return EmployeeDto.ToDtos(session.Query<Employee>()
+                            //.Fetch(emp => emp.Addresses)
+                            .ToList());
+                    }
+                }
+            });
+        }
+
+        [Fact]
+        public void CustomTupilizer()
+        {
+            // create our NHibernate session factory
+            var sessionFactory = CreateSessionFactory(typeof(CustomTupilizerAddressMap), typeof(CustomTupilizerEmployeeMap));
+
+            Repeat("CustomTupilizer", () =>
+            {
+                using (var session = sessionFactory.OpenSession())
+                {
+                    // retrieve all stores and display them
                     using (session.BeginTransaction())
                     {
                         return EmployeeDto.ToDtos(session.Query<Employee>()
@@ -50,32 +77,106 @@ namespace PerfTestNhibernate
             });
         }
 
-        private void Repeat(Func<IEnumerable<EmployeeDto>> action)
+        private void Repeat(string scenario, Func<IEnumerable<EmployeeDto>> action)
         {
-            TimeSpan totalTime = TimeSpan.Zero;
-            float totalTimeInGc = 0;
+            MeasurementInfo timeMeasurement = new MeasurementInfo("Custom", "Duration", x => new TimeSpan((long)x).ToString());
+            CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
+            var measurements = GetMeasurements(cancellationTokenSource.Token);
+            measurements.Add(timeMeasurement);
+            
             for (var i = 1; i < repeat + 1; i++)
             {
                 Stopwatch stopwatch = Stopwatch.StartNew();
                 var employees = action();
                 stopwatch.Stop();
-                totalTime = totalTime.Add(stopwatch.Elapsed);
+                timeMeasurement.Values.Add(stopwatch.Elapsed.Ticks);
                 employees.Should().HaveCount(RowCount);
-                float timeInGc = PerfCounters.GetPerformanceCounterValue(".NET CLR Memory", "% Time in GC");
-                totalTimeInGc += timeInGc;
-                output.WriteLine(string.Format("Finished run {0} in {1}, %GC: {2}", i, stopwatch.Elapsed, timeInGc));
             }
 
-            output.WriteLine(string.Format("Total time: {0} average: {1} %GC: {2}", totalTime, new TimeSpan(totalTime.Ticks/repeat), totalTimeInGc/repeat));
+            cancellationTokenSource.Cancel();
+
+            foreach (var measurement in measurements)
+            {
+                output.WriteLine(measurement.ToHumanString());
+            }
+
+            string path = Path.GetDirectoryName(Assembly.GetExecutingAssembly().CodeBase);
+            path = path.Substring(6);
+            //string fileName = SanatizeFileName(string.Format(@"{0} {1}.csv", scenario, DateTime.Now));
+            string shortFileName = SanatizeFileName(string.Format(@"{0} short {1}.csv", scenario, DateTime.Now));
+            //File.AppendAllLines(string.Format(@"{0}\{1}", path, fileName), measurements.Select(m => m.ToCsvString()).ToArray());
+            File.AppendAllLines(string.Format(@"{0}\{1}", path, shortFileName), measurements.Select(m => m.ToShortCsvString()).ToArray());
+        }
+
+        private static string SanatizeFileName(string name)
+        {
+            string invalidChars = Regex.Escape(new string(System.IO.Path.GetInvalidFileNameChars()));
+            string invalidRegStr = string.Format(@"([{0}]*\.+$)|([{0}]+)", invalidChars);
+
+            return Regex.Replace(name, invalidRegStr, "");
+        }
+
+        private List<MeasurementInfo> GetMeasurements(CancellationToken token)
+        {
+            List<MeasurementInfo> measurements = new List<MeasurementInfo>
+            {
+                new MeasurementInfo(".NET CLR Memory", "# Bytes in all Heaps", "MB", x => (x / (1024*1024)).ToString("0.00")),
+                new MeasurementInfo(".NET CLR Memory", "# Gen 0 Collections", "#", x => x.ToString("0")),
+                new MeasurementInfo(".NET CLR Memory", "# Gen 1 Collections", "#", x => x.ToString("0")),
+                new MeasurementInfo(".NET CLR Memory", "# Gen 2 Collections", "#", x => x.ToString("0")),
+                new MeasurementInfo(".NET CLR Memory", "Gen 0 heap size", "MB", x => (x / (1024*1024)).ToString("0.00")),
+                new MeasurementInfo(".NET CLR Memory", "Gen 1 heap size", "MB", x => (x / (1024*1024)).ToString("0.00")),
+                new MeasurementInfo(".NET CLR Memory", "Gen 2 heap size", "MB", x => (x / (1024*1024)).ToString("0.00")),
+                new MeasurementInfo(".NET CLR Memory", "Large Object Heap size", "MB", x => (x / (1024*1024)).ToString("0.00")),
+                new MeasurementInfo(".NET CLR Memory", "% Time in GC", "%"),
+                new MeasurementInfo("Process", "% Processor Time", "%"),
+                new MeasurementInfo("Process", "Working Set", "MB", x => (x / (1024*1024)).ToString("0.00"))
+            };
+
+            IEnumerable<Action> actions = measurements
+                .Select(m => (Action)(() => GetPerformanceCounterValue(m)))
+                .ToArray();
+                
+                GetMeasurements(actions, token, CounterSleepTime);
+
+            return measurements;
+        }
+
+        private void GetPerformanceCounterValue(MeasurementInfo measurementInfo)
+        {
+            measurementInfo.AddValue(PerfCounters.GetPerformanceCounterValue(measurementInfo.Category, measurementInfo.Counter));
+        }
+
+        private static void GetMeasurements(IEnumerable<Action> actions, CancellationToken token, int delay)
+        {
+            var tasks = new List<Task>();
+            var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
+
+            foreach (var action in actions)
+            {
+                var currentAction = action;
+                var task = Task.Factory.StartNew(async () =>
+                {
+                    while (true)
+                    {
+                        cts.Token.ThrowIfCancellationRequested();
+                        await Task.Delay(delay, cts.Token).ConfigureAwait(false);
+                        currentAction();
+                    }
+                });
+                tasks.Add(task);
+            }
+
+            Task.WhenAll(tasks);
         }
 
         [Fact]
         public void StatefulSessionCustomTypes()
         {
             // create our NHibernate session factory
-            var sessionFactory = CreateSessionFactory(new[] { new StringTypeConvention() });
+            var sessionFactory = CreateSessionFactory(new StringTypeConvention());
 
-            Repeat(() =>
+            Repeat("StatefulSessionCustomTypes", () =>
             {
                 using (var session = sessionFactory.OpenSession())
                 {
@@ -98,7 +199,7 @@ namespace PerfTestNhibernate
                 cfg => { cfg.Properties["adonet.wrap_result_sets"] = "true"; },
                 new[] {new StringTypeConvention()});
 
-            Repeat(() =>
+            Repeat("StatefulSessionWrapResultSets", () =>
             {
                 using (var session = sessionFactory.OpenSession())
                 {
@@ -119,7 +220,7 @@ namespace PerfTestNhibernate
             // create our NHibernate session factory
             var sessionFactory = CreateSessionFactory();
 
-            Repeat(() =>
+            Repeat("StatelessSession", () =>
             {
                 using (var session = sessionFactory.OpenStatelessSession())
                 {
@@ -142,7 +243,7 @@ namespace PerfTestNhibernate
             // create our NHibernate session factory
             var sessionFactory = CreateSessionFactory();
 
-            Repeat(() =>
+            Repeat("SqlSession", () =>
             {
                 using (var session = sessionFactory.OpenSession())
                 {
@@ -170,7 +271,7 @@ namespace PerfTestNhibernate
             // create our NHibernate session factory
             var sessionFactory = CreateSessionFactory();
 
-            Repeat(() =>
+            Repeat("ReadonlySession", () =>
             {
                 using (var session = sessionFactory.OpenSession())
                 {
@@ -193,7 +294,7 @@ namespace PerfTestNhibernate
             // create our NHibernate session factory
             var sessionFactory = CreateSessionFactory();
 
-            Repeat(() =>
+            Repeat("HqlSession", () =>
             {
                 using (var session = sessionFactory.OpenSession())
                 {
@@ -212,24 +313,34 @@ namespace PerfTestNhibernate
             });
         }
 
-        private static ISessionFactory CreateSessionFactory(IPropertyConvention[] customConventions)
+        private static ISessionFactory CreateSessionFactory(params Type[] customClassMaps)
+        {
+            return CreateSessionFactory(null, null, customClassMaps);
+        }
+
+        private static ISessionFactory CreateSessionFactory(params IPropertyConvention[] customConventions)
         {
             return CreateSessionFactory(null, customConventions);
         }
 
         private static ISessionFactory CreateSessionFactory(
             Action<Configuration> exposeConfiguration = null,
-            IPropertyConvention[] customConventions = null)
+            IPropertyConvention[] customConventions = null,
+            Type[] mappingTypes = null)
         {
             exposeConfiguration = exposeConfiguration ?? (cfg => { });
             customConventions = customConventions ?? new IPropertyConvention[0];
+            mappingTypes = mappingTypes ?? new[] { typeof(EmployeeMap), typeof(AddressMap) };
 
             return Fluently.Configure()
                 .Database(MsSqlConfiguration.MsSql2008
                     .ConnectionString("Data Source=.;Initial Catalog=Dingen; Trusted_Connection=yes;"))
                 .Mappings(m =>
                 {
-                    m.FluentMappings.AddFromAssemblyOf<NHibernatePerfTests>();
+                    foreach (var type in mappingTypes)
+                    {
+                        m.FluentMappings.Add(type);
+                    }
 
                     foreach (var convention in customConventions)
                     {

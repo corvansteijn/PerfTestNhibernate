@@ -9,7 +9,6 @@ namespace PerfTestNhibernate
     {
         public EmployeeMap()
         {
-            Tuplizer(TuplizerMode.Poco, typeof (EmployeeTupilizer));
             Table(NHibernatePerfTests.TableName);
 
             Id(emp => emp.Id);
@@ -19,6 +18,14 @@ namespace PerfTestNhibernate
 
             HasMany(emp => emp.Addresses)
                 .Cascade.AllDeleteOrphan();
+        }
+    }
+
+    public class CustomTupilizerEmployeeMap : EmployeeMap
+    {
+        public CustomTupilizerEmployeeMap()
+        {
+            Tuplizer(TuplizerMode.Poco, typeof(EmployeeTupilizer));
         }
     }
 

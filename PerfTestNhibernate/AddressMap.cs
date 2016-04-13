@@ -9,11 +9,18 @@ namespace PerfTestNhibernate
     {
         public AddressMap()
         {
-            Tuplizer(TuplizerMode.Poco, typeof(AddressTupilizer));
             Id(x => x.Id);
             Map(x => x.StreetName);
             Map(x => x.HouseNumber);
             //References(x => x.EmployeeId);
+        }
+    }
+
+    public class CustomTupilizerAddressMap : AddressMap
+    {
+        public CustomTupilizerAddressMap()
+        {
+            Tuplizer(TuplizerMode.Poco, typeof(AddressTupilizer));
         }
     }
 

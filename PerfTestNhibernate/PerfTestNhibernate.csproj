@@ -131,6 +131,7 @@
     <Compile Include="Employee.cs" />
     <Compile Include="EmployeeMap.cs" />
     <Compile Include="EqualIdentityDistinctRootTransformer.cs" />
+    <Compile Include="MeasurementInfo.cs" />
     <Compile Include="NHibernatePerfTests.cs" />
     <Compile Include="PerfCounters.cs" />
     <Compile Include="Program.cs" />
