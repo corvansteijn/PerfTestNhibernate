@@ -24,27 +24,22 @@ namespace PerfTestNhibernate
             Counter = counter;
         }
 
-        public List<float> Values
-        {
-            get { return values; }
-        }
-
         public string Category { get; private set; }
         public string Counter { get; private set; }
 
         private string Average(Func<float, string> toString)
         {
-            return SafeTrim(values => values.Average(), toString);
+            return SafeToString(Trim(), values => values.Average(), toString);
         }
 
         private string Max(Func<float, string> toString)
         {
-            return SafeTrim(values => values.Max(), toString);
+            return SafeToString(values, v => v.Max(), toString);
         }
 
         private string Min(Func<float, string> toString)
         {
-            return SafeTrim(values => values.Min(), toString);
+            return SafeToString(values, v => v.Min(), toString);
         }
 
         public string ToHumanString()
@@ -62,14 +57,14 @@ namespace PerfTestNhibernate
             get { return unit == "#"; }
         }
 
-        public string ToShortCsvString()
+        public string ToShortCsvString(string scenario)
         {
             if (IsCounter)
             {
-                return string.Format("{0}-{1}\t\t\t\t{2}", Category, Counter, Count());
+                return string.Format("{3}\t{0}-{1}\t\t\t\t{2}", Category, Counter, Count(), scenario);
             }
 
-            return string.Format("{0}-{1}\t{2}\t{3}\t{4}\t", Category, Counter, Min(toString), Average(toString), Max(toString));
+            return string.Format("{5}\t{0}-{1}\t{2}\t{3}\t{4}\t", Category, Counter, Min(toString), Average(toString), Max(toString), scenario);
         }
 
         public string ToCsvString()
@@ -82,10 +77,9 @@ namespace PerfTestNhibernate
             return unit.Length == 0 ? toString(value) : string.Format("{0} {1}", toString(value), unit);
         }
 
-        private string SafeTrim(Func<IEnumerable<float>, float> function, Func<float, string> toString)
+        private string SafeToString(IEnumerable<float> values, Func<IEnumerable<float>, float> function, Func<float, string> toString)
         {
-            var trim = Trim();
-            return trim.Any() ? toString(function(trim)) : empty;
+            return values.Any() ? toString(function(values)) : empty;
         }
 
         private int Count()
@@ -101,7 +95,7 @@ namespace PerfTestNhibernate
             return 0;
         }
 
-        private List<float> Trim()
+        private IEnumerable<float> Trim()
         {
             int trimBy = (int)Math.Floor(values.Count * 0.1);
             return values
@@ -113,7 +107,7 @@ namespace PerfTestNhibernate
 
         public void AddValue(float value)
         {
-            Values.Add(value);
+            values.Add(value);
         }
     }
 }

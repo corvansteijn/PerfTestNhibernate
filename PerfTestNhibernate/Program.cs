@@ -7,7 +7,7 @@ namespace PerfTestNhibernate
     {
         public static void Main(string[] args)
         {
-            var tests = new NHibernatePerfTests(XUnitConsole.Instance);
+            var tests = NHibernatePerfTests.Create(XUnitConsole.Instance, args[1], args[2]);
             tests.GetType().GetMethod(args[0]).Invoke(tests, null);
         }
     }

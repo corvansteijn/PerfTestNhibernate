@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Transactions;
 using FluentAssertions;
 using FluentNHibernate.Cfg;
 using FluentNHibernate.Cfg.Db;
@@ -25,61 +26,29 @@ namespace PerfTestNhibernate
     {
         public const string TableName = "Employee";
         private const int RowCount = 100000;
-        private const int CounterSleepTime = 200;
-        private const int repeat = 50;
+        private const int CounterSleepTime = 1000;
+        private int repeat = 1;
         private const string DbFile = "hugeSet.db";
         private readonly ITestOutputHelper output;
+        private string outputFile;
 
         public NHibernatePerfTests(ITestOutputHelper output)
         {
             this.output = output;
         }
 
-        [Fact]
-        public void StatefulSession()
+        public static NHibernatePerfTests Create(XUnitConsole instance, string file, string repeat)
         {
-            // create our NHibernate session factory
-            var sessionFactory = CreateSessionFactory();
-
-            Repeat("StatefulSession", () =>
+            return new NHibernatePerfTests(instance)
             {
-                using (var session = sessionFactory.OpenSession())
-                {
-                    // retrieve all stores and display them
-                    using (session.BeginTransaction())
-                    {
-                        return EmployeeDto.ToDtos(session.Query<Employee>()
-                            //.Fetch(emp => emp.Addresses)
-                            .ToList());
-                    }
-                }
-            });
-        }
-
-        [Fact]
-        public void CustomTupilizer()
-        {
-            // create our NHibernate session factory
-            var sessionFactory = CreateSessionFactory(typeof(CustomTupilizerAddressMap), typeof(CustomTupilizerEmployeeMap));
-
-            Repeat("CustomTupilizer", () =>
-            {
-                using (var session = sessionFactory.OpenSession())
-                {
-                    // retrieve all stores and display them
-                    using (session.BeginTransaction())
-                    {
-                        return EmployeeDto.ToDtos(session.Query<Employee>()
-                            .Fetch(emp => emp.Addresses)
-                            .ToList());
-                    }
-                }
-            });
+                outputFile = file,
+                repeat = int.Parse(repeat)
+            };
         }
 
         private void Repeat(string scenario, Func<IEnumerable<EmployeeDto>> action)
         {
-            MeasurementInfo timeMeasurement = new MeasurementInfo("Custom", "Duration", x => new TimeSpan((long)x).ToString());
+            MeasurementInfo timeMeasurement = new MeasurementInfo("Custom", "Duration", x => x.ToString("0"));
             CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
             var measurements = GetMeasurements(cancellationTokenSource.Token);
             measurements.Add(timeMeasurement);
@@ -89,7 +58,7 @@ namespace PerfTestNhibernate
                 Stopwatch stopwatch = Stopwatch.StartNew();
                 var employees = action();
                 stopwatch.Stop();
-                timeMeasurement.Values.Add(stopwatch.Elapsed.Ticks);
+                timeMeasurement.AddValue((float)stopwatch.Elapsed.TotalMilliseconds);
                 employees.Should().HaveCount(RowCount);
             }
 
@@ -103,9 +72,9 @@ namespace PerfTestNhibernate
             string path = Path.GetDirectoryName(Assembly.GetExecutingAssembly().CodeBase);
             path = path.Substring(6);
             //string fileName = SanatizeFileName(string.Format(@"{0} {1}.csv", scenario, DateTime.Now));
-            string shortFileName = SanatizeFileName(string.Format(@"{0} short {1}.csv", scenario, DateTime.Now));
+            string shortFileName = outputFile ?? SanatizeFileName(string.Format(@"{0} short {1}.csv", scenario, DateTime.Now));
             //File.AppendAllLines(string.Format(@"{0}\{1}", path, fileName), measurements.Select(m => m.ToCsvString()).ToArray());
-            File.AppendAllLines(string.Format(@"{0}\{1}", path, shortFileName), measurements.Select(m => m.ToShortCsvString()).ToArray());
+            File.AppendAllLines(string.Format(@"{0}\{1}", path, shortFileName), measurements.Select(m => m.ToShortCsvString(scenario)).ToArray());
         }
 
         private static string SanatizeFileName(string name)
@@ -157,9 +126,8 @@ namespace PerfTestNhibernate
                 var currentAction = action;
                 var task = Task.Factory.StartNew(async () =>
                 {
-                    while (true)
+                    while (!cts.Token.IsCancellationRequested)
                     {
-                        cts.Token.ThrowIfCancellationRequested();
                         await Task.Delay(delay, cts.Token).ConfigureAwait(false);
                         currentAction();
                     }
@@ -171,12 +139,125 @@ namespace PerfTestNhibernate
         }
 
         [Fact]
+        public void StatefulSession()
+        {
+            // create our NHibernate session factory
+            var sessionFactory = CreateSessionFactory();
+
+            Repeat("Stateful session", () =>
+            {
+                using (var session = sessionFactory.OpenSession())
+                {
+                    // retrieve all stores and display them
+                    using (session.BeginTransaction())
+                    {
+                        return EmployeeDto.ToDtos(session.Query<Employee>()
+                            .Fetch(emp => emp.Addresses)
+                            .ToList());
+                    }
+                }
+            });
+        }
+
+        [Fact]
+        public void StatefulSessionWithFlush()
+        {
+            // create our NHibernate session factory
+            var sessionFactory = CreateSessionFactory();
+
+            Repeat("Stateful session with flush", () =>
+            {
+                using (var session = sessionFactory.OpenSession())
+                {
+                    // retrieve all stores and display them
+                    using (var transaction = session.BeginTransaction())
+                    {
+                        var employees = EmployeeDto.ToDtos(session.Query<Employee>()
+                            .Fetch(emp => emp.Addresses)
+                            .ToList());
+
+                        transaction.Commit();
+                        return employees;
+                    }
+                }
+            });
+        }
+
+        [Fact]
+        public void StatefulSessionWithTransactionScope()
+        {
+            // create our NHibernate session factory
+            var sessionFactory = CreateSessionFactory();
+
+            Repeat("Stateful session with transaction scope", () =>
+            {
+                using (var session = sessionFactory.OpenSession())
+                {
+                    // retrieve all stores and display them
+                    using (var tx = new TransactionScope())
+                    {
+                        var employees = EmployeeDto.ToDtos(session.Query<Employee>()
+                            .Fetch(emp => emp.Addresses)
+                            .ToList());
+
+                        tx.Complete();
+                        return employees;
+                    }
+                }
+            });
+        }
+
+        [Fact]
+        public void StatefulSessionWithTransactionScopeNoComplete()
+        {
+            // create our NHibernate session factory
+            var sessionFactory = CreateSessionFactory();
+
+            Repeat("Stateful session with transaction scope but no complete", () =>
+            {
+                using (var session = sessionFactory.OpenSession())
+                {
+                    // retrieve all stores and display them
+                    using (var tx = new TransactionScope())
+                    {
+                        var employees = EmployeeDto.ToDtos(session.Query<Employee>()
+                            .Fetch(emp => emp.Addresses)
+                            .ToList());
+
+                        return employees;
+                    }
+                }
+            });
+        }
+
+        [Fact]
+        public void CustomTupilizer()
+        {
+            // create our NHibernate session factory
+            var sessionFactory = CreateSessionFactory(typeof(CustomTupilizerAddressMap), typeof(CustomTupilizerEmployeeMap));
+
+            Repeat("Set id without reflection", () =>
+            {
+                using (var session = sessionFactory.OpenSession())
+                {
+                    // retrieve all stores and display them
+                    using (session.BeginTransaction())
+                    {
+                        return EmployeeDto.ToDtos(session.Query<Employee>()
+                            .Fetch(emp => emp.Addresses)
+                            .ToList());
+                    }
+                }
+            });
+        }
+
+        [Fact]
         public void StatefulSessionCustomTypes()
         {
             // create our NHibernate session factory
             var sessionFactory = CreateSessionFactory(new StringTypeConvention());
 
-            Repeat("StatefulSessionCustomTypes", () =>
+            Repeat("Stateful session no IsDbNull", () =>
             {
                 using (var session = sessionFactory.OpenSession())
                 {
@@ -199,7 +280,7 @@ namespace PerfTestNhibernate
                 cfg => { cfg.Properties["adonet.wrap_result_sets"] = "true"; },
                 new[] {new StringTypeConvention()});
 
-            Repeat("StatefulSessionWrapResultSets", () =>
+            Repeat("Stateful session wrap resultsets", () =>
             {
                 using (var session = sessionFactory.OpenSession())
                 {
@@ -220,7 +301,7 @@ namespace PerfTestNhibernate
             // create our NHibernate session factory
             var sessionFactory = CreateSessionFactory();
 
-            Repeat("StatelessSession", () =>
+            Repeat("Stateless session", () =>
             {
                 using (var session = sessionFactory.OpenStatelessSession())
                 {
@@ -238,12 +319,89 @@ namespace PerfTestNhibernate
         }
 
         [Fact]
+        public void StatelessSessionWithFlush()
+        {
+            // create our NHibernate session factory
+            var sessionFactory = CreateSessionFactory();
+
+            Repeat("Stateless session with flush", () =>
+            {
+                using (var session = sessionFactory.OpenStatelessSession())
+                {
+                    // retreive all stores and display them
+                    using (var transaction = session.BeginTransaction())
+                    {
+                        var employees = EmployeeDto.ToDtos(session.QueryOver<Employee>()
+                            .Fetch(emp => emp.Addresses)
+                            .Eager
+                            .TransformUsing(new EqualIdentityDistinctRootTransformer())
+                            .List());
+
+                        transaction.Commit();
+                        return employees;
+                    }
+                }
+            });
+        }
+
+        [Fact]
+        public void StatelessSessionWithTransactionScope()
+        {
+            // create our NHibernate session factory
+            var sessionFactory = CreateSessionFactory();
+
+            Repeat("Stateless session with transaction scope", () =>
+            {
+                using (var session = sessionFactory.OpenStatelessSession())
+                {
+                    // retreive all stores and display them
+                    using (var tx = new TransactionScope())
+                    {
+                        var employees = EmployeeDto.ToDtos(session.QueryOver<Employee>()
+                            .Fetch(emp => emp.Addresses)
+                            .Eager
+                            .TransformUsing(new EqualIdentityDistinctRootTransformer())
+                            .List());
+
+                        tx.Complete();
+                        return employees;
+                    }
+                }
+            });
+        }
+
+        [Fact]
+        public void StatelessSessionWithTransactionScopeNoComplete()
+        {
+            // create our NHibernate session factory
+            var sessionFactory = CreateSessionFactory();
+
+            Repeat("Stateless session with transaction scope but no complete", () =>
+            {
+                using (var session = sessionFactory.OpenStatelessSession())
+                {
+                    // retreive all stores and display them
+                    using (var tx = new TransactionScope())
+                    {
+                        var employees = EmployeeDto.ToDtos(session.QueryOver<Employee>()
+                            .Fetch(emp => emp.Addresses)
+                            .Eager
+                            .TransformUsing(new EqualIdentityDistinctRootTransformer())
+                            .List());
+
+                        return employees;
+                    }
+                }
+            });
+        }
+
+        [Fact]
         public void SqlSession()
         {
             // create our NHibernate session factory
             var sessionFactory = CreateSessionFactory();
 
-            Repeat("SqlSession", () =>
+            Repeat("Sql query", () =>
             {
                 using (var session = sessionFactory.OpenSession())
                 {
@@ -271,7 +429,7 @@ namespace PerfTestNhibernate
             // create our NHibernate session factory
             var sessionFactory = CreateSessionFactory();
 
-            Repeat("ReadonlySession", () =>
+            Repeat("Readonly session", () =>
             {
                 using (var session = sessionFactory.OpenSession())
                 {
@@ -289,12 +447,63 @@ namespace PerfTestNhibernate
         }
 
         [Fact]
+        public void ReadonlySessionWithFlush()
+        {
+            // create our NHibernate session factory
+            var sessionFactory = CreateSessionFactory();
+
+            Repeat("Readonly session with flush", () =>
+            {
+                using (var session = sessionFactory.OpenSession())
+                {
+                    session.DefaultReadOnly = true;
+                    
+                    // retreive all stores and display them
+                    using (var transaction = session.BeginTransaction())
+                    {
+                        var employees = EmployeeDto.ToDtos(session.Query<Employee>()
+                            .Fetch(emp => emp.Addresses)
+                            .ToList());
+
+                        transaction.Commit();
+                        return employees;
+                    }
+                }
+            });
+        }
+
+        [Fact]
+        public void ReadonlySessionWithTransactionScope()
+        {
+            // create our NHibernate session factory
+            var sessionFactory = CreateSessionFactory();
+
+            Repeat("Readonly session with transaction scope", () =>
+            {
+                using (var session = sessionFactory.OpenSession())
+                {
+                    session.DefaultReadOnly = true;
+
+                    using (var tx = new TransactionScope())
+                    {
+                        var employees = EmployeeDto.ToDtos(session.Query<Employee>()
+                            .Fetch(emp => emp.Addresses)
+                            .ToList());
+
+                        tx.Complete();
+                        return employees;
+                    }
+                }
+            });
+        }
+
+        [Fact]
         public void HqlSession()
         {
             // create our NHibernate session factory
             var sessionFactory = CreateSessionFactory();
 
-            Repeat("HqlSession", () =>
+            Repeat("Hql query", () =>
             {
                 using (var session = sessionFactory.OpenSession())
                 {
